@@ -15,5 +15,7 @@ RUN dotnet publish src/StatisticService.Api/StatisticService.Api.csproj -c Relea
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 8080
+# The non-root "app" user (uid 1654) that the .NET images ship with.
+USER $APP_UID
 COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "StatisticService.Api.dll"]

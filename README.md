@@ -47,6 +47,7 @@ dotnet run --project src/StatisticService.Api
 - API: http://localhost:5003
 - Swagger: http://localhost:5003/swagger
 - Health: http://localhost:5003/health
+- Ready (also checks Postgres): http://localhost:5003/health/ready
 - Postgres: `localhost:5443` (postgres / postgres)
 
 ## Database migrations

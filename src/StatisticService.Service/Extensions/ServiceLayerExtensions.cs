@@ -1,5 +1,3 @@
-using StatisticService.Service.Interfaces;
-using StatisticService.Service.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace StatisticService.Service.Extensions;
@@ -8,7 +6,7 @@ public static class ServiceLayerExtensions
 {
     public static IServiceCollection AddServiceLayer(this IServiceCollection services)
     {
-        services.AddScoped<IExampleService, ExampleService>();
+        // Register services here, e.g. services.AddScoped<IStatsService, StatsService>();
 
         return services;
     }

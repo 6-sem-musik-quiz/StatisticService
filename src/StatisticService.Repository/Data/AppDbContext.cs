@@ -5,7 +5,8 @@ namespace StatisticService.Repository.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
-    public DbSet<Example> Examples => Set<Example>();
+    public DbSet<GameStats> GameStats => Set<GameStats>();
+    public DbSet<UserStats> UserStats => Set<UserStats>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -29,6 +29,49 @@ Api  ──►  Service  ──►  Repository
 5. Controller in `Api/Controllers`
 6. Tests
 
+## API
+
+Publicly reachable through the edge as `/api/statisticservice/...`, e.g.
+`GET /api/statisticservice/api/statistics/weekly`.
+
+### `GET /api/statistics/weekly?week=current`
+
+The weekly leaderboard for the front page. Needs a login (`Authorization: Bearer <JWT>` from
+UserService); any role may call it. `week` is `current` (also used when the parameter is left out)
+or an ISO 8601 week such as `2026-W47`.
+
+| Status | When |
+|---|---|
+| 200 | `{ weekStart, weekEnd, mostWins: [{ userId, userName, wins, gamesPlayed }], winRate: [{ userId, userName, winRate, gamesPlayed }], accuracy: [{ userId, userName, accuracy, gamesPlayed }] }` |
+| 400 | `week` is empty, malformed or not a real week (e.g. `2026-W54`, or `2025-W53`, since 2025 has 52 weeks). ProblemDetails body. |
+| 401 | Missing, expired or invalid token. |
+
+Definitions:
+
+- **The week** runs Monday 00:00:00 to Sunday 23:59:59 in Danish time (`Europe/Copenhagen`, with daylight saving), judged on the game's `EndTime`. The query is the half-open UTC interval `[Monday 00:00, next Monday 00:00)`, so a week is 167 or 169 hours long when the clocks change. `weekStart`/`weekEnd` carry the Danish UTC offset of that moment (so in the October week they are `+02:00` and `+01:00`). The calculation is the pure function `WeeklyPeriod.TryParse`.
+- **Win**: `Placement = 1`. A shared first place counts as a win for everyone with placement 1.
+- **winRate** = wins / games played in the week. **accuracy** = sum(`CorrectAnswers`) / sum(`AnsweredRounds`), `0` if nothing was answered. Both are **fractions from 0 to 1** (`0.75` = 75 %); the frontend formats them.
+- `winRate` and `accuracy` need **at least 5 games** in the week. `mostWins` has no minimum, but players with 0 wins are not listed.
+- Each list is the top 10, highest first. Ties: most games, then user name (case-insensitive, ordinal), then user id. A renamed player is shown with the name from their latest game that week.
+
+### Authentication settings
+
+UserService issues the tokens (HS256); this service only validates them, so the values must match UserService.
+
+| Setting | Env var | Default |
+|---|---|---|
+| `Jwt:SigningKey` | `Jwt__SigningKey` | none. **Secret**, never commit it. Without it every token gets 401 (the service still starts, `/health` is anonymous). |
+| `Jwt:Issuer` | `Jwt__Issuer` | `slopster-userservice` |
+| `Jwt:Audience` | `Jwt__Audience` | `slopster` |
+
+The Issuer/Audience defaults are copied from the other services' plans, not from a verified Platform contract. Check them against UserService before relying on them.
+
+### Contract status
+
+The `statisticservice.api` contract for this endpoint has not been added to Platform yet, and the
+StatisticService database contract `0.2a3436aa4dd8` predates `UserName`, `Score`, `CorrectAnswers` and `AnsweredRounds`
+(added in SCRUM-105). Both need a separate Platform PR before the contract can be called verified.
+
 ## Running locally
 
 Locally the API always runs against the **real** Postgres in the cluster

@@ -48,6 +48,7 @@ builder.Services.AddRepositoryLayer(
     builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException("Connection string 'Default' is not configured."));
 builder.Services.AddServiceLayer();
+builder.Services.AddResultConsumer(builder.Configuration);
 
 var app = builder.Build();
 

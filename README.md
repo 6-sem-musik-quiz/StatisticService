@@ -95,6 +95,31 @@ The `statisticservice.api` contract for this endpoint has not been added to Plat
 StatisticService database contract `0.2a3436aa4dd8` predates `UserName`, `Score`, `CorrectAnswers` and `AnsweredRounds`
 (added in SCRUM-105). Both need a separate Platform PR before the contract can be called verified.
 
+## Game results from RabbitMQ (SCRUM-85)
+
+`ResultConsumer` (a hosted service) reads the `GameFinished` messages GameService publishes when a
+game ends and saves them as `GameStats` + `UserStats`.
+
+- Declares the durable queue `statisticservice.game-finished` and binds it to the topic exchange
+  `game-events` with routing key `game.finished.v1`. All pods share the queue, so each message is
+  saved once. Messages published while the queue did not exist yet were dropped by RabbitMQ.
+- Message: camelCase JSON `{ gameId, rounds, startTime, endTime, catId, categoryName, players: [{ userId, userName, score, correctAnswers, answeredRounds, placement }] }`,
+  as described in SCRUM-83 (the Platform contract file is not merged yet).
+- **Idempotent**: a `gameId` that is already saved is acked and ignored.
+- **Ack** after saving. **Nack without requeue** (dropped, no dead-letter queue) when the JSON can't be read
+  or breaks a rule: missing `gameId`, `rounds` ≤ 0, `endTime` before `startTime`, empty or > 60 char
+  category, no players, the same `userId` twice, empty or > 20 char `userName`, `correctAnswers` > `answeredRounds`,
+  `placement` < 1. **Nack with requeue** (after `ReconnectDelaySeconds`) when saving fails, e.g. the database is down.
+- If RabbitMQ is unreachable the API keeps running and the consumer reconnects every `ReconnectDelaySeconds`.
+
+| Setting | Env var | Default |
+|---|---|---|
+| `RabbitMQ:Enabled` | `RabbitMQ__Enabled` | `true`; `false` in `appsettings.Development.json`, so local runs and tests never take messages from the real queue |
+| `RabbitMQ:Host` / `Port` / `VirtualHost` | `RabbitMQ__Host` ... | `localhost` / `5672` / `/` (cluster: set by `statisticservice-secrets` in gitops) |
+| `RabbitMQ:Username` / `Password` | `RabbitMQ__Username` ... | `guest` / `guest`. **Secret** in the cluster (OpenBao `kv/quiz/rabbitmq`). |
+| `RabbitMQ:ExchangeName` / `RoutingKey` / `QueueName` | | `game-events` / `game.finished.v1` / `statisticservice.game-finished` |
+| `RabbitMQ:PrefetchCount` / `ReconnectDelaySeconds` | | `10` / `5` |
+
 ## Running locally
 
 Locally the API always runs against the **real** Postgres in the cluster

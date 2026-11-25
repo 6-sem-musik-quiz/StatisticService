@@ -54,6 +54,29 @@ Definitions:
 - `winRate` and `accuracy` need **at least 5 games** in the week. `mostWins` has no minimum, but players with 0 wins are not listed.
 - Each list is the top 10, highest first. Ties: most games, then user name (case-insensitive, ordinal), then user id. A renamed player is shown with the name from their latest game that week.
 
+### `GET /api/statistics/me`
+
+My own stats. Needs a JWT from UserService (see Authentication settings); the user id is the `sub` claim.
+401 without a valid token, or if `sub` is not a number.
+
+```json
+{
+  "gamesPlayed": 3,
+  "wins": 2,
+  "winRate": 0.6667,
+  "accuracy": 0.5,
+  "roundsPlayed": 30,
+  "timePlayedSeconds": 2100,
+  "mostPlayedCategory": { "categoryId": 7, "categoryName": "Rock", "games": 2 },
+  "mostCommonFriend": { "userId": 2, "userName": "Alice", "gamesTogether": 2 }
+}
+```
+
+- `wins` = games with `Placement = 1`. `winRate` = wins / gamesPlayed, `accuracy` = sum(CorrectAnswers) / sum(AnsweredRounds). Both are fractions 0-1, and 0 when there is nothing to divide by.
+- `roundsPlayed` = sum of `Rounds`; `timePlayedSeconds` = sum of `EndTime - StartTime` in whole seconds.
+- `mostPlayedCategory` / `mostCommonFriend` are `null` when there are no games (or no other players). A tie goes to the category / friend with the newest game; the friend's name is taken from that game.
+- No games yet: 200 with zeros and `null`s.
+
 ### Authentication settings
 
 UserService issues the tokens (HS256); this service only validates them, so the values must match UserService.

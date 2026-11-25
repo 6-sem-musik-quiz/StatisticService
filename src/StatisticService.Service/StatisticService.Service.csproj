@@ -3,4 +3,10 @@
     <ProjectReference Include="..\StatisticService.Domain\StatisticService.Domain.csproj" />
     <ProjectReference Include="..\StatisticService.Repository\StatisticService.Repository.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Same client version as GameService's publisher. -->
+    <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.5" />
+  </ItemGroup>
 </Project>

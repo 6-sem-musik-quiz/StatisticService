@@ -1,4 +1,7 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.IdentityModel.Tokens;
 using StatisticService.Api.Middleware;
 using StatisticService.Repository.Data;
 using StatisticService.Repository.Extensions;
@@ -15,6 +18,31 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 // that the database answers, so a pod without a DB gets no traffic.
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("postgres", tags: ["ready"]);
+
+// Tokens are issued by UserService (HS256). This service only validates them, with the same
+// Jwt:SigningKey/Issuer/Audience. Options are read when first used rather than at startup, so a
+// missing key makes every token fail with 401 instead of stopping /health from starting.
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IConfiguration>((options, config) =>
+    {
+        options.MapInboundClaims = false; // keep "sub" as "sub"
+        var signingKey = config["Jwt:SigningKey"];
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = config["Jwt:Issuer"],
+            ValidateAudience = true,
+            ValidAudience = config["Jwt:Audience"],
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = string.IsNullOrEmpty(signingKey)
+                ? null
+                : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+            ClockSkew = TimeSpan.FromSeconds(30)
+        };
+    });
+builder.Services.AddAuthorization();
 
 builder.Services.AddRepositoryLayer(
     builder.Configuration.GetConnectionString("Default")
@@ -35,6 +63,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// No fallback policy: only endpoints marked [Authorize] need a login, so /health stays anonymous.
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });

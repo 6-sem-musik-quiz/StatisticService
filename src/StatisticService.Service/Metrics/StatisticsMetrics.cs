@@ -18,7 +18,14 @@ public sealed class StatisticsMetrics : IDisposable
     {
         Meter = new Meter(MeterName);
         _results = Meter.CreateCounter<long>(GameResultsName, description: "GameFinished messages, by what happened to them.");
+
+        // Start every result at 0. A counter series only appears at its first Add, so without this
+        // Prometheus' increase() and rate() never see a pod's first saved game (there is no earlier sample).
+        foreach (var result in Results)
+            _results.Add(0, new KeyValuePair<string, object?>("result", result));
     }
+
+    public static readonly IReadOnlyList<string> Results = ["saved", "duplicate", "invalid", "retry"];
 
     public Meter Meter { get; }
 

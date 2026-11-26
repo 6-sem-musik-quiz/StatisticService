@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using StatisticService.Domain.DTOs;
+using StatisticService.Service.Metrics;
 using StatisticService.Service.Results;
 
 namespace StatisticService.Service.Messaging;
@@ -15,7 +16,8 @@ public enum DeliveryOutcome
 
 // Turns one delivery into a save and decides what to tell RabbitMQ. Kept apart from the
 // RabbitMQ plumbing in ResultConsumer so it can be tested without a broker.
-public class GameFinishedHandler(IServiceScopeFactory scopes, ILogger<GameFinishedHandler> logger)
+// metrics (SCRUM-190) counts what happened to each message; null in tests that do not look at it.
+public class GameFinishedHandler(IServiceScopeFactory scopes, ILogger<GameFinishedHandler> logger, StatisticsMetrics? metrics = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -29,12 +31,14 @@ public class GameFinishedHandler(IServiceScopeFactory scopes, ILogger<GameFinish
         catch (JsonException e)
         {
             logger.LogWarning(e, "Dropped a GameFinished message that is not valid JSON");
+            metrics?.GameResult("invalid");
             return DeliveryOutcome.Reject;
         }
 
         if (message is null)
         {
             logger.LogWarning("Dropped an empty GameFinished message");
+            metrics?.GameResult("invalid");
             return DeliveryOutcome.Reject;
         }
 
@@ -50,11 +54,13 @@ public class GameFinishedHandler(IServiceScopeFactory scopes, ILogger<GameFinish
             else
                 logger.LogInformation("Saved game {GameId} with {Players} players", message.GameId, message.Players.Count);
 
+            metrics?.GameResult(result == SaveResult.Duplicate ? "duplicate" : "saved");
             return DeliveryOutcome.Ack;
         }
         catch (InvalidGameResultException e)
         {
             logger.LogWarning("Dropped GameFinished for game {GameId}: {Reason}", message.GameId, e.Message);
+            metrics?.GameResult("invalid");
             return DeliveryOutcome.Reject;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -64,6 +70,7 @@ public class GameFinishedHandler(IServiceScopeFactory scopes, ILogger<GameFinish
         catch (Exception e)
         {
             logger.LogError(e, "Could not save game {GameId}; it goes back on the queue", message.GameId);
+            metrics?.GameResult("retry");
             return DeliveryOutcome.Requeue;
         }
     }

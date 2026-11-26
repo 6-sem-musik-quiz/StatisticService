@@ -6,6 +6,11 @@ using StatisticService.Api.Middleware;
 using StatisticService.Repository.Data;
 using StatisticService.Repository.Extensions;
 using StatisticService.Service.Extensions;
+using StatisticService.Service.Metrics;
+using OpenTelemetry;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -49,6 +54,26 @@ builder.Services.AddRepositoryLayer(
     ?? throw new InvalidOperationException("Connection string 'Default' is not configured."));
 builder.Services.AddServiceLayer();
 builder.Services.AddResultConsumer(builder.Configuration);
+
+// SCRUM-173/190: traces, metrics and logs over OTLP. The collector address comes from
+// OTEL_EXPORTER_OTLP_ENDPOINT (default http://localhost:4317) and the service name from OTEL_SERVICE_NAME
+// (both set by the gitops chart). A GameFinished message continues GameService's trace: RabbitMQ.Client
+// reads the trace context from the message headers. Logs carry the trace id.
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(o => o.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/health"))
+        .AddSource("RabbitMQ.Client.Subscriber") // receiving GameFinished, in the game's trace
+        .AddSource("Npgsql"))                    // the SQL each request and message runs
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation() // http.server.request.duration for /weekly and /me
+        .AddMeter("System.Runtime", "Npgsql")
+        .AddMeter(StatisticsMetrics.MeterName))
+    .WithLogging(logging => { }, options =>
+    {
+        options.IncludeFormattedMessage = true;
+        options.IncludeScopes = true;
+    })
+    .UseOtlpExporter();
 
 var app = builder.Build();
 

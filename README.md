@@ -120,6 +120,18 @@ game ends and saves them as `GameStats` + `UserStats`.
 | `RabbitMQ:ExchangeName` / `RoutingKey` / `QueueName` | | `game-events` / `game.finished.v1` / `statisticservice.game-finished` |
 | `RabbitMQ:PrefetchCount` / `ReconnectDelaySeconds` | | `10` / `5` |
 
+## Traces, metrics and logs (SCRUM-173, SCRUM-190)
+
+Everything goes over OTLP (`UseOtlpExporter`; endpoint `OTEL_EXPORTER_OTLP_ENDPOINT`, name `OTEL_SERVICE_NAME`, both
+from the gitops chart) to Alloy, and on to Tempo, Prometheus and Loki.
+
+- **Traces:** HTTP requests (not `/health`), the SQL (`Npgsql`) and receiving `GameFinished`
+  (`RabbitMQ.Client.Subscriber`). RabbitMQ.Client reads the trace context from the message headers, so saving a
+  game continues GameService's trace for that game.
+- **Metrics:** `http.server.request.duration` (`/api/statistics/weekly`, `/me`), runtime and Npgsql, and
+  `slopster_game_results_total{result=saved|duplicate|invalid|retry}`, one per `GameFinished` message.
+- **Logs** (`ILogger`) carry the trace id.
+
 ## Running locally
 
 Locally the API always runs against the **real** Postgres in the cluster

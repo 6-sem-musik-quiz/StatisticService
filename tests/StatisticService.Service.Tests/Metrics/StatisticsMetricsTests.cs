@@ -21,7 +21,7 @@ public class StatisticsMetricsTests : IDisposable
     private readonly StatisticsMetrics _metrics = new();
     private readonly GameFinishedHandler _handler;
     private readonly MeterListener _listener = new();
-    private readonly List<string?> _results = [];
+    private readonly Dictionary<string, long> _totals = [];
 
     public StatisticsMetricsTests()
     {
@@ -37,9 +37,8 @@ public class StatisticsMetricsTests : IDisposable
         _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
             Assert.Equal(StatisticsMetrics.GameResultsName, instrument.Name);
-            Assert.Equal(1, value);
             foreach (var tag in tags)
-                if (tag.Key == "result") _results.Add(tag.Value as string);
+                if (tag.Key == "result") _totals[(string)tag.Value!] = value;
         });
         _listener.Start();
     }
@@ -70,31 +69,21 @@ public class StatisticsMetricsTests : IDisposable
             .ThrowsAsync(new TimeoutException("database down"));
         await Handle(Valid);
 
-        Assert.Equal(["saved", "duplicate", "invalid", "invalid", "retry"], _results);
+        _listener.RecordObservableInstruments(); // what the exporter does at every export
+        Assert.Equal(new Dictionary<string, long> { ["saved"] = 1, ["duplicate"] = 1, ["invalid"] = 2, ["retry"] = 1 }, _totals);
     }
 
     [Fact]
-    public void EveryResult_StartsAtZero_SoTheFirstGameShowsAsAnIncrease()
+    public void EveryResult_IsExportedFromTheStart_AsZero()
     {
-        var seen = new List<(Meter Meter, long Value, string? Result)>();
-        using var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == StatisticsMetrics.MeterName) l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
-        {
-            string? result = null;
-            foreach (var tag in tags)
-                if (tag.Key == "result") result = tag.Value as string;
-            lock (seen) seen.Add((instrument.Meter, value, result));
-        });
-        listener.Start();
+        _listener.RecordObservableInstruments();
 
-        using var metrics = new StatisticsMetrics();
+        Assert.Equal(new Dictionary<string, long> { ["saved"] = 0, ["duplicate"] = 0, ["invalid"] = 0, ["retry"] = 0 }, _totals);
+    }
 
-        List<(long, string?)> mine;
-        lock (seen) mine = [.. seen.Where(m => m.Meter == metrics.Meter).Select(m => (m.Value, m.Result))];
-        Assert.Equal([(0L, "saved"), (0L, "duplicate"), (0L, "invalid"), (0L, "retry")], mine);
+    [Fact]
+    public void AnUnknownResult_IsABug()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => _metrics.GameResult("lost"));
     }
 }

@@ -175,6 +175,11 @@ and the deploy applies them.
 dotnet test
 ```
 
+`Postgres/PostgresQueryTests` (SCRUM-189) start a real PostgreSQL in Docker (Testcontainers) and apply the
+migrations, so Docker must be running. They save games through the real write path (`GameResultService`) and
+check the weekly leaderboard (including the week boundary on Sunday 23:59 / Monday 00:00 Danish time),
+every field of `/api/statistics/me` and that the same game saved twice is a duplicate. The other tests use fakes.
+
 ## Service ports
 
 | Service | API |

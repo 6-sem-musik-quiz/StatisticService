@@ -72,4 +72,29 @@ public class StatisticsMetricsTests : IDisposable
 
         Assert.Equal(["saved", "duplicate", "invalid", "invalid", "retry"], _results);
     }
+
+    [Fact]
+    public void EveryResult_StartsAtZero_SoTheFirstGameShowsAsAnIncrease()
+    {
+        var seen = new List<(Meter Meter, long Value, string? Result)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == StatisticsMetrics.MeterName) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+        {
+            string? result = null;
+            foreach (var tag in tags)
+                if (tag.Key == "result") result = tag.Value as string;
+            lock (seen) seen.Add((instrument.Meter, value, result));
+        });
+        listener.Start();
+
+        using var metrics = new StatisticsMetrics();
+
+        List<(long, string?)> mine;
+        lock (seen) mine = [.. seen.Where(m => m.Meter == metrics.Meter).Select(m => (m.Value, m.Result))];
+        Assert.Equal([(0L, "saved"), (0L, "duplicate"), (0L, "invalid"), (0L, "retry")], mine);
+    }
 }

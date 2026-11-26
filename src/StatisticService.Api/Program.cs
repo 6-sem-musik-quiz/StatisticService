@@ -1,3 +1,4 @@
+using StatisticService.Service.Messaging;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -62,7 +63,7 @@ builder.Services.AddResultConsumer(builder.Configuration);
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation(o => o.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/health"))
-        .AddSource("RabbitMQ.Client.Subscriber") // receiving GameFinished, in the game's trace
+        .AddSource(MessageTracing.SourceName) // GameFinished, as a child of the game's publish (not RabbitMQ.Client's linked "deliver" trace)
         .AddSource("Npgsql"))                    // the SQL each request and message runs
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation() // http.server.request.duration for /weekly and /me

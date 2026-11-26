@@ -111,7 +111,10 @@ public class ResultConsumer(
 
     private async Task OnReceivedAsync(IChannel channel, BasicDeliverEventArgs delivery, CancellationToken stoppingToken)
     {
+        // SCRUM-173: the handling (SQL, logs) runs in the game's trace.
+        using var activity = MessageTracing.StartConsume(delivery.BasicProperties, _options.QueueName, delivery.RoutingKey);
         var outcome = await handler.HandleAsync(delivery.Body, stoppingToken);
+        activity?.SetTag("slopster.outcome", outcome.ToString());
         if (stoppingToken.IsCancellationRequested) return; // unacked: RabbitMQ redelivers it
 
         switch (outcome)

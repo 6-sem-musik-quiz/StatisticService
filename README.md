@@ -126,8 +126,9 @@ Everything goes over OTLP (`UseOtlpExporter`; endpoint `OTEL_EXPORTER_OTLP_ENDPO
 from the gitops chart) to Alloy, and on to Tempo, Prometheus and Loki.
 
 - **Traces:** HTTP requests (not `/health`), the SQL (`Npgsql`) and receiving `GameFinished`
-  (`RabbitMQ.Client.Subscriber`). RabbitMQ.Client reads the trace context from the message headers, so saving a
-  game continues GameService's trace for that game.
+  (`Slopster.Statistics.Messaging`). `MessageTracing` reads the `traceparent` GameService's publish put in the
+  message headers and starts the consumer span as its child, so saving a game continues GameService's trace for
+  that game. RabbitMQ.Client's own `deliver` span is not used: it starts a new trace with only a link.
 - **Metrics:** `http.server.request.duration` (`/api/statistics/weekly`, `/me`), runtime and Npgsql, and
   `slopster_game_results_total{result=saved|duplicate|invalid|retry}`, one per `GameFinished` message.
 - **Logs** (`ILogger`) carry the trace id.

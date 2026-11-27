@@ -23,7 +23,8 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 // /health is liveness (the process is up); /health/ready also checks
 // that the database answers, so a pod without a DB gets no traffic.
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<AppDbContext>("postgres", tags: ["ready"]);
+    .AddDbContextCheck<AppDbContext>("postgres", tags: ["ready"])
+    .AddDbContextCheck<StatsReadDbContext>("postgres-read", tags: ["ready"]); // SCRUM-202: the read replicas
 
 // Tokens are issued by UserService (HS256). This service only validates them, with the same
 // Jwt:SigningKey/Issuer/Audience. Options are read when first used rather than at startup, so a
@@ -56,7 +57,9 @@ builder.Services.AddRepositoryLayer(
     builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException("Connection string 'Default' is not configured."),
     // SCRUM-195: the leaderboard cache. Not set = no cache, the leaderboard is read from Postgres.
-    builder.Configuration.GetConnectionString("Redis"));
+    builder.Configuration.GetConnectionString("Redis"),
+    // SCRUM-202: the read replicas. Not set = reads go to the primary ("Default") as well.
+    builder.Configuration.GetConnectionString("Read"));
 builder.Services.AddServiceLayer();
 builder.Services.AddResultConsumer(builder.Configuration);
 

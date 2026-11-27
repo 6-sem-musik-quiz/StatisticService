@@ -27,6 +27,30 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public AppDbContext NewContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(_container.GetConnectionString()).Options);
+
+    // SCRUM-202: the read context on the same database ("replicas" that are fully caught up)...
+    public StatsReadDbContext NewReadContext() => NewReadContext(_container.GetConnectionString());
+
+    // ...or on a second, empty database with the same schema, so a test can see which of the two a
+    // query went to.
+    public async Task<StatsReadDbContext> NewEmptyReadContextAsync()
+    {
+        const string name = "empty_stand_in_for_replicas";
+        await using (var db = NewContext())
+        {
+            if (!await db.Database.SqlQueryRaw<int>($"SELECT 1 AS \"Value\" FROM pg_database WHERE datname = '{name}'").AnyAsync())
+            {
+                await db.Database.ExecuteSqlRawAsync($"CREATE DATABASE {name}");
+                var builder = new Npgsql.NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = name };
+                await using var empty = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(builder.ConnectionString).Options);
+                await empty.Database.MigrateAsync();
+            }
+        }
+        return NewReadContext(new Npgsql.NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = name }.ConnectionString);
+    }
+
+    private static StatsReadDbContext NewReadContext(string connectionString) =>
+        new(new DbContextOptionsBuilder<StatsReadDbContext>().UseNpgsql(connectionString).Options);
 }
 
 public class PostgresQueryTests(PostgresFixture postgres) : IClassFixture<PostgresFixture>, IAsyncLifetime
@@ -94,7 +118,8 @@ public class PostgresQueryTests(PostgresFixture postgres) : IClassFixture<Postgr
     public async Task WeeklyResults_OnlyHaveGamesThatEndedInTheWeek_InDanishTime()
     {
         await using var db = postgres.NewContext();
-        var repository = new WeeklyStatsRepository(db);
+        await using var read = postgres.NewReadContext();
+        var repository = new WeeklyStatsRepository(db, read);
 
         var w47 = Week("2026-W47");
         var rows47 = await repository.GetPlayerResultsAsync(w47.StartUtc, w47.EndUtc);
@@ -112,7 +137,8 @@ public class PostgresQueryTests(PostgresFixture postgres) : IClassFixture<Postgr
     public async Task WeeklyLeaderboard_FromPostgres_CountsSharedFirstPlaceAsWins_AndRatesOnlyFrom5Games()
     {
         await using var db = postgres.NewContext();
-        var service = new WeeklyLeaderboardService(new WeeklyStatsRepository(db), new FixedTime(Now));
+        await using var read = postgres.NewReadContext();
+        var service = new WeeklyLeaderboardService(new WeeklyStatsRepository(db, read), new FixedTime(Now));
 
         var board = await service.GetAsync("2026-W47");
 
@@ -130,7 +156,7 @@ public class PostgresQueryTests(PostgresFixture postgres) : IClassFixture<Postgr
     [Fact]
     public async Task MyStats_FromPostgres_MatchEveryField()
     {
-        await using var db = postgres.NewContext();
+        await using var db = postgres.NewReadContext();
         var service = new MyStatsService(new MyStatsRepository(db));
 
         var me = await service.GetMyStatsAsync(Alice);
@@ -150,7 +176,7 @@ public class PostgresQueryTests(PostgresFixture postgres) : IClassFixture<Postgr
     [Fact]
     public async Task MyStats_ForAPlayerWithoutGames_AreEmpty()
     {
-        await using var db = postgres.NewContext();
+        await using var db = postgres.NewReadContext();
 
         var nobody = await new MyStatsService(new MyStatsRepository(db)).GetMyStatsAsync(99);
 
@@ -167,5 +193,49 @@ public class PostgresQueryTests(PostgresFixture postgres) : IClassFixture<Postgr
         await using var db = postgres.NewContext();
         Assert.Equal(6, await db.GameStats.CountAsync());
         Assert.Equal(3, await db.UserStats.CountAsync(u => u.GameId == G2.GameId));
+    }
+
+    // ---- SCRUM-202: read/write split ----
+
+    [Fact]
+    public async Task TheLeaderboardFallback_ReadsFromTheReplicas_AndTheRebuild_FromThePrimary()
+    {
+        await using var primary = postgres.NewContext();
+        await using var replicas = await postgres.NewEmptyReadContextAsync(); // same schema, no games
+        var repository = new WeeklyStatsRepository(primary, replicas);
+        var w47 = Week("2026-W47");
+
+        var fallback = await repository.GetPlayerResultsAsync(w47.StartUtc, w47.EndUtc);
+        var rebuild = await repository.GetPlayerResultsWithGameAsync(w47.StartUtc, w47.EndUtc);
+
+        Assert.Empty(fallback);          // from the "replicas"
+        Assert.Equal(11, rebuild.Count); // from the primary, which has the games
+    }
+
+    [Fact]
+    public async Task MyStats_ReadFromTheReplicas()
+    {
+        await using var replicas = await postgres.NewEmptyReadContextAsync();
+
+        var me = await new MyStatsService(new MyStatsRepository(replicas)).GetMyStatsAsync(Alice);
+
+        Assert.Equal(0, me.GamesPlayed); // the primary has 4 games for Alice
+    }
+
+    [Fact]
+    public async Task TheReadContext_CannotSave_AndDoesNotTrack()
+    {
+        await using var read = postgres.NewReadContext();
+
+        var row = await read.UserStats.FirstAsync();
+        Assert.Empty(read.ChangeTracker.Entries());
+
+        read.GameStats.Add(new StatisticService.Domain.Entities.GameStats { Id = Guid.NewGuid(), Rounds = 1, CatId = 1, CategoryName = "x" });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => read.SaveChangesAsync());
+        Assert.Throws<InvalidOperationException>(() => read.SaveChanges());
+
+        await using var db = postgres.NewContext();
+        Assert.Equal(6, await db.GameStats.CountAsync()); // nothing was written
+        Assert.NotEqual(0, row.UserId);
     }
 }

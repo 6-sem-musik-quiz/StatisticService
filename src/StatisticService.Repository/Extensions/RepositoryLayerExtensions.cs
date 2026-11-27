@@ -10,12 +10,17 @@ namespace StatisticService.Repository.Extensions;
 
 public static class RepositoryLayerExtensions
 {
+    // connectionString: the primary (reads and writes, migrations).
+    // readConnectionString (SCRUM-202): the read replicas. null or empty = read from the primary too
+    // (local development and tests have one Postgres).
     // redisConnectionString (SCRUM-195): the leaderboard cache. null or empty = no cache, the
     // leaderboard is read from Postgres only.
     public static IServiceCollection AddRepositoryLayer(this IServiceCollection services, string connectionString,
-        string? redisConnectionString = null)
+        string? redisConnectionString = null, string? readConnectionString = null)
     {
         services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
+        var replicas = string.IsNullOrWhiteSpace(readConnectionString) ? connectionString : readConnectionString;
+        services.AddDbContext<StatsReadDbContext>(options => options.UseNpgsql(replicas));
         services.AddScoped<IWeeklyStatsRepository, WeeklyStatsRepository>();
         services.AddScoped<IMyStatsRepository, MyStatsRepository>();
         services.AddScoped<IGameResultRepository, GameResultRepository>();

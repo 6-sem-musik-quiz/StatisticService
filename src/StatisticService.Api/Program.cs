@@ -45,10 +45,12 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             IssuerSigningKey = string.IsNullOrEmpty(signingKey)
                 ? null
                 : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
-            ClockSkew = TimeSpan.FromSeconds(30)
+            ClockSkew = TimeSpan.FromSeconds(30),
+            RoleClaimType = "role" // UserService writes the role as "role" (SCRUM-197, admin cleanup)
         };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy(StatisticService.Api.Controllers.AuthPolicies.AdminOnly, policy => policy.RequireRole("Admin")));
 
 builder.Services.AddRepositoryLayer(
     builder.Configuration.GetConnectionString("Default")

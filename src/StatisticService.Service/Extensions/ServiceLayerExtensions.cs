@@ -17,6 +17,7 @@ public static class ServiceLayerExtensions
         services.AddScoped<IWeeklyLeaderboardService, WeeklyLeaderboardService>();
         services.AddScoped<IMyStatsService, MyStatsService>();
         services.AddScoped<IGameResultService, GameResultService>();
+        services.AddScoped<IAdminStatsService, AdminStatsService>(); // SCRUM-197
 
         return services;
     }

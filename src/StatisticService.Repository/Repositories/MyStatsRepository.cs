@@ -4,7 +4,8 @@ using StatisticService.Repository.Interfaces;
 
 namespace StatisticService.Repository.Repositories;
 
-public class MyStatsRepository(AppDbContext db) : IMyStatsRepository
+// SCRUM-202: "my stats" reads from the read replicas.
+public class MyStatsRepository(StatsReadDbContext db) : IMyStatsRepository
 {
     public async Task<IReadOnlyList<MyGameRow>> GetMyGamesAsync(int userId, CancellationToken ct = default) =>
         await db.UserStats.AsNoTracking()

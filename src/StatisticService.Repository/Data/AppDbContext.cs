@@ -3,8 +3,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace StatisticService.Repository.Data;
 
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+// The primary (SCRUM-202): reads and writes, and the only context migrations run against.
+public class AppDbContext : DbContext
 {
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    // For StatsReadDbContext, which needs options of its own type.
+    protected AppDbContext(DbContextOptions options) : base(options) { }
+
     public DbSet<GameStats> GameStats => Set<GameStats>();
     public DbSet<UserStats> UserStats => Set<UserStats>();
 

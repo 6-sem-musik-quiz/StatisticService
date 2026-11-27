@@ -41,6 +41,10 @@ public sealed class CacheFixture : IAsyncLifetime
     public AppDbContext NewContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options);
 
+    // SCRUM-202: one Postgres here, so the "replicas" are the same database.
+    public StatsReadDbContext NewReadContext() =>
+        new(new DbContextOptionsBuilder<StatsReadDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options);
+
     public async Task FlushRedisAsync()
     {
         foreach (var server in Redis.GetServers())
@@ -94,7 +98,8 @@ public class LeaderboardCacheTests(CacheFixture fx) : IClassFixture<CacheFixture
     private async Task<WeeklyLeaderboardResponse> Board(ILeaderboardCache? cache)
     {
         await using var db = fx.NewContext();
-        return await new WeeklyLeaderboardService(new WeeklyStatsRepository(db), new FixedTime(Now), cache, _metrics).GetAsync(Week);
+        await using var read = fx.NewReadContext();
+        return await new WeeklyLeaderboardService(new WeeklyStatsRepository(db, read), new FixedTime(Now), cache, _metrics).GetAsync(Week);
     }
 
     // Records compare their lists by reference, so compare the JSON the API would send.

@@ -181,6 +181,32 @@ expire 56 days after their last change. See `RedisLeaderboardCache`.
 
 Not cached: `GET /api/statistics/me` (each player only reads their own stats, so caching gains little).
 
+## Read replicas: reads from the replicas, writes to the primary (SCRUM-202)
+
+Postgres runs as one primary and two read replicas (`quizdb` in gitops, SCRUM-201). StatisticService is
+the read-heavy service, so it is the example of a read/write split:
+
+| What | Context | Server |
+|---|---|---|
+| Saving GameFinished, admin cleanup, migrations | `AppDbContext` | primary (`ConnectionStrings:Default`) |
+| Leaderboard fallback (no Redis), "my stats" | `StatsReadDbContext` | replicas (`ConnectionStrings:Read`) |
+| Rebuilding the Redis leaderboard | `AppDbContext` | primary |
+
+- `StatsReadDbContext` does not track queries and throws on `SaveChanges`; the replicas refuse
+  writes anyway ("cannot execute ... in a read-only transaction").
+- The rebuild reads from the primary on purpose. It records which games it counted, and a game the
+  cache skipped while the week was not cached is only counted by the rebuild. A replica a few
+  milliseconds behind could miss a game committed just before, and the leaderboard would miss it
+  until the week is rebuilt again. The fallback is read again on the next request, so a short lag
+  there does no harm.
+- Synchronous commit (`on`, one replica) means a commit is written to one replica before it returns;
+  applying it there can take a few more milliseconds, and the other replica can be further behind.
+- `ConnectionStrings:Read` not set (local runs, tests): reads go to the primary too.
+- `/health/ready` checks both (`postgres`, `postgres-read`). In traces, the Npgsql spans show which
+  server a query went to (`server.address`).
+- Other services (User, Music) stay on the primary: they read their own writes at once (login,
+  refresh tokens).
+
 ## Running locally
 
 Locally the API always runs against the **real** Postgres in the cluster
@@ -223,8 +249,10 @@ To add a migration:
 
 ```bash
 dotnet tool install --global dotnet-ef
-dotnet ef migrations add <Name> --project src/StatisticService.Repository --startup-project src/StatisticService.Api
+dotnet ef migrations add <Name> --project src/StatisticService.Repository --startup-project src/StatisticService.Api --context AppDbContext
 ```
+
+`--context AppDbContext`: there are two contexts (SCRUM-202), and migrations only belong to the primary.
 
 Do **not** run `dotnet ef database update` locally: your connection string points at the real
 database, so it would apply your branch's migrations to the shared schema. Merge to `main`

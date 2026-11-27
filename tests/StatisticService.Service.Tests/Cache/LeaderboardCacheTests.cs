@@ -8,6 +8,7 @@ using StatisticService.Repository.Interfaces;
 using StatisticService.Repository.Repositories;
 using StatisticService.Service.Metrics;
 using StatisticService.Service.Results;
+using StatisticService.Service.Services;
 using StatisticService.Service.Weekly;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
@@ -232,6 +233,40 @@ public class LeaderboardCacheTests(CacheFixture fx) : IClassFixture<CacheFixture
         Assert.True(await Cache.CompleteRebuildAsync(Week, token, [], [], WeeklyLeaderboardService.MinGamesForRates));
         Assert.True(await fx.Redis.GetDatabase().KeyExistsAsync(RedisLeaderboardCache.Key(Week, "ready")));
         Assert.False(await fx.Redis.GetDatabase().KeyExistsAsync(RedisLeaderboardCache.Key(Week, "building")));
+    }
+
+    // ---- SCRUM-197 load-bot cleanup ----
+
+    // Deleting rows in Postgres must not leave them in the cache: the cache only ever adds.
+    [Fact]
+    public async Task DeletingTheLoadBots_AlsoRemovesThemFromTheCachedLeaderboard()
+    {
+        await WarmWeek();
+        await Save(Game(Utc(18, 19, 0), P(1, "alice", 4, 5, 2), P(90, "loadbot_1", 5, 5, 1)), Cache);
+        await Save(Game(Utc(19, 19, 0), P(91, "loadbot_2", 5, 5, 1), P(92, "loadbot_3", 1, 5, 2)), Cache);
+        var before = await Board(Cache);
+        Assert.Contains(before.MostWins, w => w.UserName.StartsWith("loadbot_"));
+
+        await using (var db = fx.NewContext())
+            Assert.Equal(3, await new AdminStatsService(new AdminStatsRepository(db), Cache).DeleteLoadBotStatsAsync("loadbot_", CancellationToken.None));
+
+        var after = await Board(Cache); // miss: rebuilt from Postgres, without the bots
+        Assert.DoesNotContain(after.MostWins, w => w.UserName.StartsWith("loadbot_"));
+        Assert.Empty(after.MostWins); // alice has no win
+        await AssertSameAsPostgres(after);
+        await AssertSameAsPostgres(await Board(Cache)); // and the next read is a hit with the same answer
+    }
+
+    [Fact]
+    public async Task InvalidatingTheCache_CancelsARebuildThatIsRunning()
+    {
+        var token = await Cache.TryStartRebuildAsync(Week);
+        Assert.NotNull(token);
+
+        await Cache.InvalidateAllAsync();
+
+        // That rebuild may have read the rows that were just deleted: it must not be stored.
+        Assert.False(await Cache.CompleteRebuildAsync(Week, token, [], [], WeeklyLeaderboardService.MinGamesForRates));
     }
 
     // ---- Redis down ----

@@ -199,6 +199,37 @@ public sealed class RedisLeaderboardCache(IConnectionMultiplexer redis) : ILeade
         return (int)await Run(CompleteRebuildScript, AllKeys(week), [.. args]) == 1;
     }
 
+    // Deletes every week's "ready" and "building" key. Without "ready" a week is a miss and is rebuilt
+    // (the rebuild deletes the old data first); without "building" a rebuild that read Postgres before
+    // the deletion can no longer complete, because its lock token is gone. SCAN, not KEYS, so Redis is
+    // not blocked; only used by the admin cleanup.
+    public async Task<int> InvalidateAllAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var count = 0;
+            foreach (var server in redis.GetServers().Where(s => s.IsConnected && !s.IsReplica))
+            {
+                var keys = new List<RedisKey>();
+                await foreach (var key in server.KeysAsync(pattern: "stats:{*}:ready").WithCancellation(ct))
+                    keys.Add(key);
+                await foreach (var key in server.KeysAsync(pattern: "stats:{*}:building").WithCancellation(ct))
+                    keys.Add(key);
+                foreach (var key in keys)
+                    if (await redis.GetDatabase().KeyDeleteAsync(key) && key.ToString().EndsWith(":ready", StringComparison.Ordinal))
+                        count++;
+            }
+
+            if (!redis.IsConnected)
+                throw new CacheUnavailableException("Redis is not available");
+            return count;
+        }
+        catch (Exception e) when (e is RedisException or RedisTimeoutException)
+        {
+            throw new CacheUnavailableException("Redis is not available", e);
+        }
+    }
+
     // "games|wins|correct|answered|lastEndUnixMs|userName"; the name is last, so it may contain '|'.
     public static WeekPlayerTotals Parse(int userId, string value)
     {

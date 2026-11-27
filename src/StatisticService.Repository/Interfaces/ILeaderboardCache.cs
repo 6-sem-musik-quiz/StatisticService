@@ -49,4 +49,9 @@ public interface ILeaderboardCache
     // the lock expired and someone else took it.
     Task<bool> CompleteRebuildAsync(string week, string token, IReadOnlyList<WeekPlayerTotals> players,
         IReadOnlyList<Guid> gameIds, int minGamesForRates, CancellationToken ct = default);
+
+    // Marks every week as not cached and cancels running rebuilds, so the next read of each week
+    // rebuilds it from Postgres. For when rows are deleted in Postgres (SCRUM-197 load-bot cleanup):
+    // the cache only ever adds, so it would keep showing the deleted players. Returns the weeks reset.
+    Task<int> InvalidateAllAsync(CancellationToken ct = default);
 }

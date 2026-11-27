@@ -21,4 +21,6 @@ public sealed class NoLeaderboardCache : ILeaderboardCache
     public Task<bool> CompleteRebuildAsync(string week, string token, IReadOnlyList<WeekPlayerTotals> players,
         IReadOnlyList<Guid> gameIds, int minGamesForRates, CancellationToken ct = default)
         => Task.FromResult(false);
+
+    public Task<int> InvalidateAllAsync(CancellationToken ct = default) => Task.FromResult(0);
 }

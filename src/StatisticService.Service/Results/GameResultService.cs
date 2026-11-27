@@ -1,6 +1,8 @@
 using StatisticService.Domain.DTOs;
 using StatisticService.Domain.Entities;
 using StatisticService.Repository.Interfaces;
+using StatisticService.Service.Metrics;
+using StatisticService.Service.Weekly;
 
 namespace StatisticService.Service.Results;
 
@@ -18,7 +20,15 @@ public interface IGameResultService
     Task<SaveResult> SaveAsync(GameFinishedMessage message, CancellationToken ct = default);
 }
 
-public class GameResultService(IGameResultRepository repository) : IGameResultService
+// SCRUM-195: write-through. The game is saved in Postgres first (the truth), then added to the
+// leaderboard in Redis. A CacheUnavailableException after the commit sends the message back on the
+// queue; when it comes back Postgres says Duplicate, and Redis still counts it exactly once, because
+// the cache remembers which gameIds it has counted. So a duplicate is also written through.
+// cache/metrics are null in tests that only look at Postgres.
+public class GameResultService(
+    IGameResultRepository repository,
+    ILeaderboardCache? cache = null,
+    LeaderboardCacheMetrics? metrics = null) : IGameResultService
 {
     // Column limits in GameStatsConfiguration / UserStatsConfiguration.
     public const int MaxCategoryNameLength = 60;
@@ -27,9 +37,50 @@ public class GameResultService(IGameResultRepository repository) : IGameResultSe
     public async Task<SaveResult> SaveAsync(GameFinishedMessage message, CancellationToken ct = default)
     {
         Validate(message);
-        var saved = await repository.TryAddAsync(ToEntity(message), ct);
+        var game = ToEntity(message);
+        var saved = await repository.TryAddAsync(game, ct);
+        await AddToLeaderboardAsync(game, ct);
         return saved ? SaveResult.Saved : SaveResult.Duplicate;
     }
+
+    private async Task AddToLeaderboardAsync(GameStats game, CancellationToken ct)
+    {
+        if (cache is not { Enabled: true })
+            return;
+
+        var week = WeeklyPeriod.Containing(game.EndTime).Key;
+        var players = game.Players
+            .Select(p => new CachedPlayerResult(p.UserId, p.UserName, p.Placement == 1, p.CorrectAnswers, p.AnsweredRounds))
+            .ToList();
+
+        CacheWriteResult result;
+        try
+        {
+            result = await cache.AddGameAsync(week, game.Id, ToUnixMs(game.EndTime), players,
+                WeeklyLeaderboardService.MinGamesForRates, ct);
+        }
+        catch (CacheUnavailableException)
+        {
+            metrics?.Write("failed");
+            throw;
+        }
+
+        metrics?.Write(result switch
+        {
+            CacheWriteResult.Applied => "applied",
+            CacheWriteResult.AlreadyApplied => "already_applied",
+            CacheWriteResult.WeekNotCached => "week_not_cached",
+            _ => "rebuilding"
+        });
+
+        // The week is being rebuilt from Postgres right now, and the rebuild may have read the
+        // database before this game was committed. Try again once the rebuild is done.
+        if (result == CacheWriteResult.Rebuilding)
+            throw new CacheUnavailableException($"the leaderboard for {week} is being rebuilt");
+    }
+
+    public static long ToUnixMs(DateTime utc) =>
+        new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
 
     public static GameStats ToEntity(GameFinishedMessage m) => new()
     {

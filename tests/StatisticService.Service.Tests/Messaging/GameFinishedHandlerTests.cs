@@ -88,6 +88,16 @@ public class GameFinishedHandlerTests
         Assert.Equal(DeliveryOutcome.Requeue, await Handle(GameServiceJson));
     }
 
+    // SCRUM-195: saved in Postgres, but Redis did not take it. The message must come back.
+    [Fact]
+    public async Task LeaderboardCacheError_IsRequeued()
+    {
+        _service.SaveAsync(Arg.Any<GameFinishedMessage>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new StatisticService.Repository.Interfaces.CacheUnavailableException("Redis is not available"));
+
+        Assert.Equal(DeliveryOutcome.Requeue, await Handle(GameServiceJson));
+    }
+
     [Fact]
     public async Task Consumer_WhenDisabled_NeverConnects()
     {

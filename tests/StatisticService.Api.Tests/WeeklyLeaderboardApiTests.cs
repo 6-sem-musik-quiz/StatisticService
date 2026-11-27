@@ -27,6 +27,10 @@ public class WeeklyLeaderboardApiTests(WebApplicationFactory<Program> factory) :
             Queries.Add((fromUtc, toUtc));
             return Task.FromResult(results);
         }
+
+        // Only used to rebuild the Redis cache, and these tests run without Redis.
+        public Task<IReadOnlyList<GamePlayerResult>> GetPlayerResultsWithGameAsync(DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     private HttpClient CreateClient(StubRepository repository, string signingKey = SigningKey)

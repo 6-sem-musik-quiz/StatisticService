@@ -14,6 +14,7 @@ public static class ServiceLayerExtensions
     {
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<StatisticService.Service.Metrics.StatisticsMetrics>(); // SCRUM-190
+        services.AddSingleton<StatisticService.Service.Metrics.LeaderboardCacheMetrics>(); // SCRUM-195
         services.AddScoped<IWeeklyLeaderboardService, WeeklyLeaderboardService>();
         services.AddScoped<IMyStatsService, MyStatsService>();
         services.AddScoped<IGameResultService, GameResultService>();

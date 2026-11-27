@@ -43,6 +43,25 @@ public sealed record WeeklyPeriod(
     public static bool TryParse(string? week, DateTimeOffset now, out WeeklyPeriod period)
         => TryParse(week, now, CopenhagenZone, out period);
 
+    // SCRUM-195: the week a moment falls in (e.g. a game's EndTime), in Danish time.
+    public static WeeklyPeriod Containing(DateTime utc, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), zone);
+        return ForMonday(ISOWeek.ToDateTime(ISOWeek.GetYear(local), ISOWeek.GetWeekOfYear(local), DayOfWeek.Monday), zone);
+    }
+
+    public static WeeklyPeriod Containing(DateTime utc) => Containing(utc, CopenhagenZone);
+
+    // The ISO week as text, e.g. "2026-W48". Used as the week's cache key.
+    public string Key
+    {
+        get
+        {
+            var monday = WeekStart.DateTime;
+            return $"{ISOWeek.GetYear(monday):0000}-W{ISOWeek.GetWeekOfYear(monday):00}";
+        }
+    }
+
     // `monday` is a local date (time of day 00:00). Midnight never falls in a Copenhagen DST gap
     // (the clock jumps at 02:00/03:00), so converting local midnight is unambiguous.
     private static WeeklyPeriod ForMonday(DateTime monday, TimeZoneInfo zone)

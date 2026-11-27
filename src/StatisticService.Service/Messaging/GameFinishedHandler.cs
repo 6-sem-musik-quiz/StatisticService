@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using StatisticService.Domain.DTOs;
+using StatisticService.Repository.Interfaces;
 using StatisticService.Service.Metrics;
 using StatisticService.Service.Results;
 
@@ -62,6 +63,14 @@ public class GameFinishedHandler(IServiceScopeFactory scopes, ILogger<GameFinish
             logger.LogWarning("Dropped GameFinished for game {GameId}: {Reason}", message.GameId, e.Message);
             metrics?.GameResult("invalid");
             return DeliveryOutcome.Reject;
+        }
+        // SCRUM-195: saved in Postgres, but not yet in the leaderboard cache. Requeue, so the game
+        // is counted there too when the message comes back (Postgres then says Duplicate).
+        catch (CacheUnavailableException e)
+        {
+            logger.LogWarning(e, "Game {GameId} is saved, but the leaderboard cache was not updated; it goes back on the queue", message.GameId);
+            metrics?.GameResult("retry");
+            return DeliveryOutcome.Requeue;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

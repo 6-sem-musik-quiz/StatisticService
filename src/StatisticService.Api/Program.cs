@@ -54,7 +54,9 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddRepositoryLayer(
     builder.Configuration.GetConnectionString("Default")
-    ?? throw new InvalidOperationException("Connection string 'Default' is not configured."));
+    ?? throw new InvalidOperationException("Connection string 'Default' is not configured."),
+    // SCRUM-195: the leaderboard cache. Not set = no cache, the leaderboard is read from Postgres.
+    builder.Configuration.GetConnectionString("Redis"));
 builder.Services.AddServiceLayer();
 builder.Services.AddResultConsumer(builder.Configuration);
 

@@ -132,6 +132,54 @@ from the gitops chart) to Alloy, and on to Tempo, Prometheus and Loki.
 - **Metrics:** `http.server.request.duration` (`/api/statistics/weekly`, `/me`), runtime and Npgsql, and
   `slopster_game_results_total{result=saved|duplicate|invalid|retry}`, one per `GameFinished` message.
 - **Logs** (`ILogger`) carry the trace id.
+- **Leaderboard cache (SCRUM-195):** `slopster_leaderboard_cache_reads_total{result=hit|miss|fallback}` and
+  `slopster_leaderboard_cache_writes_total{result=applied|already_applied|week_not_cached|rebuilding|failed}`.
+  Hit ratio: `sum(rate(slopster_leaderboard_cache_reads_total{result="hit"}[5m])) / sum(rate(slopster_leaderboard_cache_reads_total[5m]))`.
+
+## Weekly leaderboard cache: write-through to Redis (SCRUM-195)
+
+Before SCRUM-195 every `GET /weekly` read **all** of the week's player results from Postgres and ranked them in
+memory: the cost grows with the number of players, on every read. Now the week's totals are kept in Redis and
+updated when a game is saved, so a read only touches the few players who can be in a top 10.
+
+**Why write-through and not cache-aside.** The leaderboard is read far more often than it is written (one write
+per finished game, a read every time someone opens the front page). With cache-aside a read after a game would
+either show stale numbers until a TTL runs out, or miss and do the expensive query again. With write-through the
+work moves to the write, which happens rarely, in the background (the RabbitMQ consumer), and the cache is never
+stale. Postgres stays the truth: everything in Redis can be rebuilt from it.
+
+```
+GameFinished --> GameResultService --1--> Postgres (transaction, gameId is the key)
+                                   --2--> Redis (one Lua script: the whole game or nothing)
+                                   --3--> ack (only when both are written)
+GET /weekly  --> Redis hit? yes --> rank the candidates
+                            no  --> Postgres, and rebuild the week in Redis
+                            Redis down --> Postgres (as before)
+```
+
+Keys per ISO week, e.g. `stats:{2026-W48}:players` (hash of per-player totals), `:wins`, `:winrate`, `:accuracy`
+(sorted sets for the three lists), `:games` (set of counted gameIds), `:ready` and `:building` (rebuild lock).
+The `{week}` part is a Redis Cluster hash tag, so a week stays on one shard if Redis is ever sharded. Weeks
+expire 56 days after their last change. See `RedisLeaderboardCache`.
+
+- **At-least-once delivery.** Postgres ignores a `gameId` it already has; Redis ignores a `gameId` that is
+  already in the week's `:games` set. A message delivered twice is counted once in both.
+- **Redis fails after the Postgres commit:** the message is requeued (like a database error). When it comes
+  back Postgres says duplicate, but the game is still written through and counted in Redis once.
+- **Empty Redis** (restart: it has no disk, or an expired week): the first read is a miss. It takes the week's
+  rebuild lock, reads the week from Postgres in one query, answers from it, and writes the week to Redis with the
+  list of counted games. While the lock is held, saved games are requeued instead of written, so a game committed
+  during the rebuild is neither lost nor counted twice.
+- **Redis down:** reads fall back to Postgres; the service and `/health/ready` do not depend on Redis.
+- Redis and Postgres rank with the same code (`WeeklyLeaderboardService.Rank`), and the tests check that both
+  give the same answer, also with ties at 10th place.
+- `ConnectionStrings:Redis` not set (local runs, API tests): no cache, the leaderboard is read from Postgres.
+
+| Setting | Env var | Default |
+|---|---|---|
+| `ConnectionStrings:Redis` | `ConnectionStrings__Redis` | none (no cache). Cluster: `redis-master.quiz.svc.cluster.local:6379,password=...`, built from OpenBao `kv/quiz/redis` in gitops. |
+
+Not cached: `GET /api/statistics/me` (each player only reads their own stats, so caching gains little).
 
 ## Running locally
 
@@ -192,6 +240,11 @@ dotnet test
 migrations, so Docker must be running. They save games through the real write path (`GameResultService`) and
 check the weekly leaderboard (including the week boundary on Sunday 23:59 / Monday 00:00 Danish time),
 every field of `/api/statistics/me` and that the same game saved twice is a duplicate. The other tests use fakes.
+
+`Cache/LeaderboardCacheTests` (SCRUM-195) start a PostgreSQL **and** a Redis in Docker and check the write-through:
+a game shows in both, the same message twice is counted once, an emptied Redis is rebuilt to the same leaderboard,
+a game saved during a rebuild is counted exactly once, Redis down falls back to Postgres, and with 25 players and
+ties at 10th place Redis gives the same top 10 as Postgres.
 
 ## Service ports
 

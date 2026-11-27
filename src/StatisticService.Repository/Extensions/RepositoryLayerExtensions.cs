@@ -19,6 +19,7 @@ public static class RepositoryLayerExtensions
         services.AddScoped<IWeeklyStatsRepository, WeeklyStatsRepository>();
         services.AddScoped<IMyStatsRepository, MyStatsRepository>();
         services.AddScoped<IGameResultRepository, GameResultRepository>();
+        services.AddScoped<IAdminStatsRepository, AdminStatsRepository>(); // SCRUM-197
 
         if (string.IsNullOrWhiteSpace(redisConnectionString))
         {
